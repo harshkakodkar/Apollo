@@ -19,7 +19,7 @@ export default function DoctorListing({ filters, onPageChange }: DoctorListingPr
   const [currentPage, setCurrentPage] = useState(filters.page)
   const doctorsPerPage = 5
 
-  // Hardcoded doctors (first two)
+  // Hardcoded doctors with proper consultModes
   const hardcodedDoctors: Doctor[] = [
     {
       id: "1",
@@ -62,34 +62,28 @@ export default function DoctorListing({ filters, onPageChange }: DoctorListingPr
   }
 
   const fetchDoctors = async () => {
-    setLoading(true);
+    setLoading(true)
     try {
-      // Convert filters to query params
-      const queryParams = new URLSearchParams();
-  
-      if (filters.consultMode && filters.consultMode.length > 0) {
-        queryParams.append("consultMode", filters.consultMode.join(","));
-      }
-  
-      if (filters.experience && filters.experience.length > 0) {
-        queryParams.append("experience", filters.experience.join(","));
-      }
-  
-      if (filters.fees && filters.fees.length > 0) {
-        queryParams.append("fees", filters.fees.join(","));
-      }
-  
-      if (filters.language && filters.language.length > 0) {
-        queryParams.append("language", filters.language.join(","));
-      }
-  
-      queryParams.append("sortBy", sortBy);
+      const queryParams = new URLSearchParams()
 
-      // Fetch API doctors
-      const response = await fetch(`http://localhost:5000/api/list-doctor-with-filter?${queryParams.toString()}`);
-      const apiData = await response.json();
+      if (filters.consultMode.length > 0) {
+        queryParams.append("consultMode", filters.consultMode.join(","))
+      }
+      if (filters.experience.length > 0) {
+        queryParams.append("experience", filters.experience.join(","))
+      }
+      if (filters.fees.length > 0) {
+        queryParams.append("fees", filters.fees.join(","))
+      }
+      if (filters.language.length > 0) {
+        queryParams.append("language", filters.language.join(","))
+      }
+      queryParams.append("sortBy", sortBy)
+
+      const response = await fetch(`http://localhost:5000/api/list-doctor-with-filter?${queryParams.toString()}`)
+      const apiData = await response.json()
       
-      // Transform API data
+      // Transform API data with proper consultModes
       const apiDoctors: Doctor[] = apiData.data.map((doctor: any) => ({
         id: doctor._id,
         name: doctor.name,
@@ -103,108 +97,135 @@ export default function DoctorListing({ filters, onPageChange }: DoctorListingPr
         visitFee: doctor.visitFee ? `₹${doctor.visitFee}` : undefined,
         image: doctor.image || "/placeholder.svg?height=80&width=80",
         languages: doctor.languages || [],
-        consultModes: doctor.consultModes || [],
+        consultModes: doctor.consultModes || 
+                     (doctor.onlineFee ? ["online"] : [])
+                     .concat(doctor.visitFee ? ["hospital"] : []),
         experienceYears: doctor.experienceYears || 0
-      }));
+      }))
 
-      // Combine hardcoded and API doctors
-      let combinedDoctors = [...hardcodedDoctors, ...apiDoctors]
-
-      // Apply filters to the combined list
-      if (filters.consultMode.length > 0) {
-        combinedDoctors = combinedDoctors.filter((doctor) =>
-          filters.consultMode.some((mode) => doctor.consultModes?.includes(mode)),
-        )
-      }
-
-      if (filters.experience.length > 0) {
-        combinedDoctors = combinedDoctors.filter((doctor) => {
-          const years = doctor.experienceYears || Number.parseInt(doctor.experience.split(" ")[0])
-          return filters.experience.some((range) => {
-            if (range === "0-5") return years >= 0 && years <= 5
-            if (range === "6-10") return years >= 6 && years <= 10
-            if (range === "11-16") return years >= 11 && years <= 16
-            if (range === "17+") return years >= 17
+      // First filter hardcoded doctors
+      const filteredHardcoded = hardcodedDoctors.filter(doctor => {
+        // Consult mode filter
+        if (filters.consultMode.length > 0) {
+          if (!doctor.consultModes || !filters.consultMode.some(mode => 
+              doctor.consultModes.includes(mode))) {
             return false
-          })
-        })
-      }
+          }
+        }
+        return true
+      })
 
-      if (filters.fees.length > 0) {
-        combinedDoctors = combinedDoctors.filter((doctor) => {
-          const fee = Number.parseInt(doctor.fee?.replace(/[^\d]/g, "") || "0")
-          const onlineFee = Number.parseInt(doctor.onlineFee?.replace(/[^\d]/g, "") || "0")
-          const visitFee = Number.parseInt(doctor.visitFee?.replace(/[^\d]/g, "") || "0")
+      // Then combine with API doctors (which are already filtered by the API)
+      const combinedDoctors = [...filteredHardcoded, ...apiDoctors]
 
-          return filters.fees.some((range) => {
-            if (range === "100-500") {
-              return (
-                (fee >= 100 && fee <= 500) ||
-                (onlineFee >= 100 && onlineFee <= 500) ||
-                (visitFee >= 100 && visitFee <= 500)
-              )
-            }
-            if (range === "500-1000") {
-              return (
-                (fee >= 500 && fee <= 1000) ||
-                (onlineFee >= 500 && onlineFee <= 1000) ||
-                (visitFee >= 500 && visitFee <= 1000)
-              )
-            }
-            if (range === "1000+") {
-              return fee > 1000 || onlineFee > 1000 || visitFee > 1000
-            }
-            return false
-          })
-        })
-      }
-
-      if (filters.language.length > 0) {
-        combinedDoctors = combinedDoctors.filter((doctor) =>
-          filters.language.some((lang) => doctor.languages?.includes(lang)),
-        )
-      }
+      // Apply remaining filters that couldn't be handled by API
+      const filteredDoctors = applyClientSideFilters(combinedDoctors, filters)
 
       // Apply sorting
-      if (sortBy === "experience") {
-        combinedDoctors.sort((a, b) => {
-          const yearsA = a.experienceYears || Number.parseInt(a.experience.split(" ")[0])
-          const yearsB = b.experienceYears || Number.parseInt(b.experience.split(" ")[0])
-          return yearsB - yearsA // Sort by experience (descending)
-        })
-      } else if (sortBy === "fees") {
-        combinedDoctors.sort((a, b) => {
-          const feeA = Number.parseInt(a.fee?.replace(/[^\d]/g, "") || "0")
-          const feeB = Number.parseInt(b.fee?.replace(/[^\d]/g, "") || "0")
-          return feeA - feeB // Sort by fees (ascending)
-        })
-      }
+      const sortedDoctors = sortDoctors(filteredDoctors, sortBy)
 
-      setAllDoctors(combinedDoctors);
+      setAllDoctors(sortedDoctors)
     } catch (error) {
-      console.error("Error fetching doctors:", error);
-      // Fallback - show only hardcoded doctors
+      console.error("Error fetching doctors:", error)
+      // Fallback - filter only hardcoded doctors
       const filteredHardcoded = hardcodedDoctors.filter(doctor => {
-        if (filters.consultMode.length > 0 && !filters.consultMode.some(mode => doctor.consultModes?.includes(mode))) {
-          return false;
+        if (filters.consultMode.length > 0 && 
+            (!doctor.consultModes || !filters.consultMode.some(mode => doctor.consultModes.includes(mode)))) {
+          return false
         }
-        return true;
-      });
-      
-      setAllDoctors(filteredHardcoded);
+        return true
+      })
+      setAllDoctors(filteredHardcoded)
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
+
+  const applyClientSideFilters = (doctors: Doctor[], filters: FilterParams) => {
+    let filtered = [...doctors]
+
+    // Experience filter
+    if (filters.experience.length > 0) {
+      filtered = filtered.filter((doctor) => {
+        const years = doctor.experienceYears || Number.parseInt(doctor.experience.split(" ")[0])
+        return filters.experience.some((range) => {
+          if (range === "0-5") return years >= 0 && years <= 5
+          if (range === "6-10") return years >= 6 && years <= 10
+          if (range === "11-16") return years >= 11 && years <= 16
+          if (range === "17+") return years >= 17
+          return false
+        })
+      })
+    }
+
+    // Fees filter
+    if (filters.fees.length > 0) {
+      filtered = filtered.filter((doctor) => {
+        const fee = Number.parseInt(doctor.fee?.replace(/[^\d]/g, "") || "0")
+        const onlineFee = Number.parseInt(doctor.onlineFee?.replace(/[^\d]/g, "") || "0")
+        const visitFee = Number.parseInt(doctor.visitFee?.replace(/[^\d]/g, "") || "0")
+
+        return filters.fees.some((range) => {
+          if (range === "100-500") {
+            return (
+              (fee >= 100 && fee <= 500) ||
+              (onlineFee >= 100 && onlineFee <= 500) ||
+              (visitFee >= 100 && visitFee <= 500)
+            )
+          }
+          if (range === "500-1000") {
+            return (
+              (fee >= 500 && fee <= 1000) ||
+              (onlineFee >= 500 && onlineFee <= 1000) ||
+              (visitFee >= 500 && visitFee <= 1000)
+            )
+          }
+          if (range === "1000+") {
+            return fee > 1000 || onlineFee > 1000 || visitFee > 1000
+          }
+          return false
+        })
+      })
+    }
+
+    // Language filter
+    if (filters.language.length > 0) {
+      filtered = filtered.filter((doctor) =>
+        filters.language.some((lang) => doctor.languages?.includes(lang))
+      )
+    }
+
+    return filtered
+  }
+
+  const sortDoctors = (doctors: Doctor[], sortBy: string) => {
+    const sorted = [...doctors]
+    
+    if (sortBy === "experience") {
+      sorted.sort((a, b) => {
+        const yearsA = a.experienceYears || Number.parseInt(a.experience.split(" ")[0])
+        const yearsB = b.experienceYears || Number.parseInt(b.experience.split(" ")[0])
+        return yearsB - yearsA
+      })
+    } else if (sortBy === "fees") {
+      sorted.sort((a, b) => {
+        const feeA = Number.parseInt(a.fee?.replace(/[^\d]/g, "") || "0")
+        const feeB = Number.parseInt(b.fee?.replace(/[^\d]/g, "") || "0")
+        return feeA - feeB
+      })
+    }
+
+    return sorted
+  }
 
   // Calculate paginated doctors
   const paginatedDoctors = useMemo(() => {
-    const startIndex = (currentPage - 1) * doctorsPerPage;
-    return allDoctors.slice(startIndex, startIndex + doctorsPerPage);
-  }, [allDoctors, currentPage]);
+    const startIndex = (currentPage - 1) * doctorsPerPage
+    return allDoctors.slice(startIndex, startIndex + doctorsPerPage)
+  }, [allDoctors, currentPage])
 
   // Calculate total pages
-  const totalPages = Math.ceil(allDoctors.length / doctorsPerPage);
+  const totalPages = Math.ceil(allDoctors.length / doctorsPerPage)
 
   return (
     <div>
